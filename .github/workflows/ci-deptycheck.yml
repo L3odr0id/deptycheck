@@ -173,14 +173,18 @@ jobs:
   deptycheck-build-docs:
     name: Build the docs
     needs: validate_trigger
-    runs-on: ubuntu-latest
-    container: sphinxdoc/sphinx:latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ ubuntu-latest, macos-latest ]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v6
         with:
           persist-credentials: false # https://docs.zizmor.sh/audits/#artipacked
+      - uses: actions/setup-python@v6
       - name: Install dependencies
-        run: pip3 install -r docs/requirements.txt
+        run: python -m pip install sphinx -r docs/requirements.txt
       - run: alias sh=bash
       # - run: pack build docs # `pack` is unaccessible here, thus:
       - run: cd docs && eval "$(grep prebuild docs.ipkg | sed 's/.*"\(.*\)"/\1/')"
