@@ -56,43 +56,80 @@ jobs:
   ################
 
   prepare-pack:
-    name: Prepare `pack`
+    name: Prepare `pack` (${{ matrix.os }})
     needs: validate_trigger
-    runs-on: ubuntu-latest
-    container: ghcr.io/stefan-hoeck/idris2-pack:latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ ubuntu-latest, macos-latest ]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v6
         with:
           persist-credentials: false # https://docs.zizmor.sh/audits/#artipacked
+
+      - uses: ./.github/actions/setup-pack-host
+        with:
+          install-pack: 'true'
 
       - run: pack update-db
       - name: Switch to appropriate `pack` collection
         run: pack switch "$( if [[ '${{ github.event_name }}' == 'schedule' ]]; then echo HEAD; else ./.pack-collection; fi )"
       - run: ./.patch-chez-gc-handler idris2
 
+      - name: Sanity check
+        run: pack help && idris2 --version
+
+      - name: Debug env
+        run: |
+          echo "=== PACK_*DIR vars ==="
+          echo "PACK_USER_DIR=${PACK_USER_DIR:-(unset)}"
+          echo "PACK_STATE_DIR=${PACK_STATE_DIR:-(unset)}"
+          echo "PACK_CACHE_DIR=${PACK_CACHE_DIR:-(unset)}"
+          echo "PACK_BIN_DIR=${PACK_BIN_DIR:-(unset)}"
+          echo "=== GITHUB_ENV contents ==="
+          cat "$GITHUB_ENV" || echo "(empty)"
+          echo "=== Binary locations ==="
+          which pack 2>/dev/null && ls -la "$(which pack)" || echo "pack not in PATH"
+          which idris2 2>/dev/null && ls -la "$(which idris2)" || echo "idris2 not in PATH"
+          echo "=== Candidate dirs ==="
+          for d in "$HOME/.pack" "$HOME/.cache/pack" "$HOME/.config/pack" "$HOME/.local" "$HOME/.idris2"; do
+            du -sh "$d" 2>/dev/null && echo "  ^ $d" || echo "missing: $d"
+          done
+
       - name: Tar the `pack` dir
         run: .github/tar-pack save-pack "${{ env.pack_dir_file }}"
       - name: Save state of `pack`
         uses: actions/upload-artifact@v7
         with:
-          name: pack-dir
+          name: pack-dir-${{ matrix.os }}
           path: ${{ env.pack_dir_file }}
 
   thirdparties-build:
-    name: Build thirdparties
-    needs: prepare-pack
-    runs-on: ubuntu-latest
-    container: ghcr.io/stefan-hoeck/idris2-pack:latest
+    name: Build thirdparties (${{ matrix.os }})
+    needs:
+      - prepare-pack
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ ubuntu-latest, macos-latest ]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v6
         with:
           persist-credentials: false # https://docs.zizmor.sh/audits/#artipacked
+
+      - uses: ./.github/actions/setup-pack-host
+
       - name: Restore state of `pack`
         uses: actions/download-artifact@v7
         with:
-          name: pack-dir
+          name: pack-dir-${{ matrix.os }}
       - name: Untar the `pack` dir
         run: .github/tar-pack restore "${{ env.pack_dir_file }}"
+
+      - name: Sanity check
+        run: pack help && idris2 --version
 
       - run: pack install-deps deptycheck
       - run: pack install summary-stat # for distr tests
@@ -103,7 +140,7 @@ jobs:
       - name: Save built thirdparties
         uses: actions/upload-artifact@v7
         with:
-          name: built-thirdparties
+          name: built-thirdparties-${{ matrix.os }}
           path: ${{ env.pack_dir_file }}
 
   ########################
@@ -116,18 +153,23 @@ jobs:
       - prepare-pack
       - thirdparties-build
     runs-on: ubuntu-latest
-    container: ghcr.io/stefan-hoeck/idris2-pack:latest
     steps:
       - name: Checkout
         uses: actions/checkout@v6
         with:
           persist-credentials: false # https://docs.zizmor.sh/audits/#artipacked
+
+      - uses: ./.github/actions/setup-pack-host
+
       - name: Restore built thirdparties
         uses: actions/download-artifact@v6
         with:
-          name: built-thirdparties
+          name: built-thirdparties-ubuntu-latest
       - name: Untar the `pack` dir
         run: .github/tar-pack restore "${{ env.pack_dir_file }}"
+
+      - name: Sanity check
+        run: pack help && idris2 --version
 
       - run: pack test elab-util-extra
 
@@ -136,22 +178,31 @@ jobs:
   ############################
 
   deptycheck-build-lib:
-    name: Build the lib
+    name: Build the lib (${{ matrix.os }})
     needs:
       - prepare-pack
       - thirdparties-build
-    runs-on: ubuntu-latest
-    container: ghcr.io/stefan-hoeck/idris2-pack:latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ ubuntu-latest, macos-latest ]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v6
         with:
           persist-credentials: false # https://docs.zizmor.sh/audits/#artipacked
+
+      - uses: ./.github/actions/setup-pack-host
+
       - name: Restore built thirdparties
         uses: actions/download-artifact@v7
         with:
-          name: built-thirdparties
+          name: built-thirdparties-${{ matrix.os }}
       - name: Untar the `pack` dir
         run: .github/tar-pack restore "${{ env.pack_dir_file }}"
+
+      - name: Sanity check
+        run: pack help && idris2 --version
 
       - run: pack build deptycheck
       - run: pack install deptycheck
@@ -163,7 +214,7 @@ jobs:
       - name: Save built DepTyCheck
         uses: actions/upload-artifact@v7
         with:
-          name: built-deptycheck
+          name: built-deptycheck-${{ matrix.os }}
           path: ${{ env.pack_dir_file }}
 
   ###########################
@@ -216,30 +267,36 @@ jobs:
           ) >> "$GITHUB_OUTPUT"
 
   deptycheck-test:
-    name: Test the lib
+    name: Test the lib (${{ matrix.os }}, ${{ matrix.test_set }})
     needs:
       - prepare-pack
       - deptycheck-build-lib
       - get-test-sets
-    runs-on: ubuntu-latest
-    container: ghcr.io/stefan-hoeck/idris2-pack:latest
+    runs-on: ${{ matrix.os }}
     env:
       NUM_THREADS: 2
     strategy:
       fail-fast: false # all test cases are more or less independent
       matrix:
+        os: [ ubuntu-latest, macos-latest ]
         test_set: ${{ fromJSON(needs.get-test-sets.outputs.test-sets) }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
         with:
           persist-credentials: false # https://docs.zizmor.sh/audits/#artipacked
+
+      - uses: ./.github/actions/setup-pack-host
+
       - name: Restore built DepTyCheck
         uses: actions/download-artifact@v7
         with:
-          name: built-deptycheck
+          name: built-deptycheck-${{ matrix.os }}
       - name: Untar the `pack` dir
         run: .github/tar-pack restore "${{ env.pack_dir_file }}"
+
+      - name: Sanity check
+        run: pack help && idris2 --version
 
       - name: Sleep a random bit
         run: sleep "$(shuf -i 0-10 -n 1)"
@@ -282,7 +339,6 @@ jobs:
       - deptycheck-build-lib
       - get-examples
     runs-on: ubuntu-latest
-    container: ghcr.io/stefan-hoeck/idris2-pack:latest
     strategy:
       fail-fast: false # all test cases are more or less independent
       matrix:
@@ -293,12 +349,18 @@ jobs:
       - uses: actions/checkout@v6
         with:
           persist-credentials: false # https://docs.zizmor.sh/audits/#artipacked
+
+      - uses: ./.github/actions/setup-pack-host
+
       - name: Restore built DepTyCheck
         uses: actions/download-artifact@v7
         with:
-          name: built-deptycheck
+          name: built-deptycheck-ubuntu-latest
       - name: Untar the `pack` dir
         run: .github/tar-pack restore "${{ env.pack_dir_file }}"
+
+      - name: Sanity check
+        run: pack help && idris2 --version
 
       - name: Sleep a random bit
         run: sleep "$(shuf -i 0-10 -n 1)"
