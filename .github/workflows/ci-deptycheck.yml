@@ -300,7 +300,21 @@ jobs:
 
       - name: Sleep a random bit
         run: sleep "$(shuf -i 0-10 -n 1)"
-
+      
+      - name: Diagnose chez/idris2 platform
+        run: |
+          echo "=== chez ==="
+          SCHEME="$(command -v scheme || command -v chez || command -v chezscheme || true)"
+          echo "scheme binary: ${SCHEME:-NOT FOUND}"
+          "$SCHEME" --version 2>&1 || true
+          echo '(display (machine-type)) (newline)' | "$SCHEME" -q || true
+          echo "=== idris2 ==="
+          idris2 --version
+          echo "=== runner ==="
+          uname -a
+          sw_vers
+          arch
+          
       - name: Run tests for ${{ matrix.test_set }}
         run: pack test deptycheck "${TEST_SET}"
         env:
