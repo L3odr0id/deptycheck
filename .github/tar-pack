@@ -25,20 +25,32 @@ if [ -z "$CMD" ] || [ -z "$ARCHIVE_FILE" ]; then
 fi
 
 pack_dirs() {
+  # Resolution mirrors stefan-hoeck/idris2-pack install.bash:
+  # honor PACK_*_DIR overrides, else fall back to XDG defaults.
+  CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}"
+  STATE_HOME="${XDG_STATE_HOME:-$HOME/.local/state}"
+  CACHE_HOME="${XDG_CACHE_HOME:-$HOME/.cache}"
   {
-    echo "$PACK_USER_DIR"
-    echo "$PACK_STATE_DIR"
-    echo "$PACK_CACHE_DIR"
-    echo "$PACK_BIN_DIR"
+    echo "${PACK_USER_DIR:-$CONFIG_HOME/pack}"
+    echo "${PACK_STATE_DIR:-$STATE_HOME/pack}"
+    echo "${PACK_CACHE_DIR:-$CACHE_HOME/pack}"
+    echo "${PACK_BIN_DIR:-$HOME/.local/bin}"
   } | while read -r r; do
     test -d "$r" && echo "$r"
   done
 }
 
+# On macOS BSD tar -u fail when archive missing (GNU tar create automatic)
+# https://man.openbsd.org/tar
+ensure_archive() {
+  [ -f "$ARCHIVE_FILE" ] && return
+  "$TAR" cf "$ARCHIVE_FILE" -T /dev/null
+}
+
 case "$CMD" in
-  save-pack) pack_dirs | tar -uvf "$ARCHIVE_FILE" --exclude=".git" --exclude="git" --files-from /dev/stdin ;;
-  save-stdin) tar -uvf "$ARCHIVE_FILE" --files-from /dev/stdin ;;
-  restore) tar -xvf "$ARCHIVE_FILE" --one-top-level=/ --touch ;;
+  save-pack) pack_dirs | tar -cvf "$ARCHIVE_FILE" --exclude=".git" --exclude="git" --files-from /dev/stdin ;;
+  save-stdin) ensure_archive; tar -rvf "$ARCHIVE_FILE" --files-from /dev/stdin ;;
+  restore) tar -xvmf "$ARCHIVE_FILE" -C / ;;
   *)
     echo "Bad command '$CMD'" >&2
     print_usage
